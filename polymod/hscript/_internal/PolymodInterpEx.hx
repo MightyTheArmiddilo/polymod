@@ -1,10 +1,10 @@
 package polymod.hscript._internal;
 
 import polymod.hscript._internal.Expr;
-import polymod.hscript._internal.Printer;
-import polymod.hscript._internal.PolymodExprEx;
 import polymod.hscript._internal.PolymodClassDeclEx.PolymodClassImport;
 import polymod.hscript._internal.PolymodClassDeclEx.PolymodStaticClassReference;
+import polymod.hscript._internal.PolymodExprEx;
+import polymod.hscript._internal.Printer;
 import polymod.util.Util;
 
 using StringTools;
@@ -140,7 +140,8 @@ class PolymodInterpEx extends Interp
 			// Force call super function.
 			return super.fcall(o, '__super_${f}', args);
 		}
-		else if (Std.isOfType(o, PolymodStaticClassReference)) {
+		else if (Std.isOfType(o, PolymodStaticClassReference))
+		{
 			var ref:PolymodStaticClassReference = cast(o, PolymodStaticClassReference);
 
 			return ref.callFunction(f, args);
@@ -153,50 +154,60 @@ class PolymodInterpEx extends Interp
 		}
 
 		var func = get(o, f);
+		if (func != null)
+		{
+			return call(o, func, args);
+		}
 
 		@:privateAccess
+		if (_proxy != null && _proxy._cachedUsingFunctions.exists(f))
 		{
-			if (func == null && _proxy != null && _proxy._cachedUsingFunctions.exists(f))
+			return _proxy._cachedUsingFunctions[f]([o].concat(args));
+		}
+		else if (_classDeclOverride != null)
+		{
+			// TODO: Optimize with a cache
+			var usingFuncs:Map<String, Array<Dynamic>->Dynamic> = [];
+			PolymodScriptClass.buildExtensionFunctionCache(_classDeclOverride, usingFuncs);
+
+			if (usingFuncs.exists(f))
 			{
-				return _proxy._cachedUsingFunctions[f]([o].concat(args));
+				return usingFuncs[f]([o].concat(args));
 			}
 		}
 
 		#if html5
 		// Workaround for an HTML5-specific issue.
 		// https://github.com/HaxeFoundation/haxe/issues/11298
-		if (func == null && f == "contains") {
+		if (f == "contains")
+		{
 			func = get(o, "includes");
 		}
-
 		// For web: remove is inlined so we have to use something else.
-		if (func == null && f == "remove")
+		else if (f == "remove")
 		{
 			@:privateAccess
 			return HxOverrides.remove(cast o, args[0]);
 		}
 		#end
 
-		if (func == null)
+		if (Std.isOfType(o, HScriptedClass))
 		{
-			if (Std.isOfType(o, HScriptedClass))
+			// This is a scripted class!
+			// We should try to call the function on the scripted class.
+			// If it doesn't exist, `asc.callFunction()` will handle generating an error message.
+			if (o.scriptCall != null)
 			{
-				// This is a scripted class!
-				// We should try to call the function on the scripted class.
-				// If it doesn't exist, `asc.callFunction()` will handle generating an error message.
-				if (o.scriptCall != null) {
-					return o.scriptCall(f, args);
-				}
+				return o.scriptCall(f, args);
+			}
 
-				errorEx(EInvalidScriptedFnAccess(f));
-			}
-			else
-			{
-				// Throw an error for a missing function.
-				errorEx(EInvalidAccess(f));
-			}
+			return errorEx(EInvalidScriptedFnAccess(f));
 		}
-		return call(o, func, args);
+		else
+		{
+			// Throw an error for a missing function.
+			return errorEx(EInvalidAccess(f));
+		}
 	}
 
 	private static var _scriptClassDescriptors:Map<String, PolymodClassDeclEx> = new Map<String, PolymodClassDeclEx>();
@@ -214,10 +225,18 @@ class PolymodInterpEx extends Interp
 		}
 	}
 
-	override function resetVariables() {
+	override function resetVariables():Void {
 		super.resetVariables();
+		
 		variables.set("Math", Math);
 		variables.set("Std", Std);
+		
+		variables.set("Array", Array);
+		variables.set("Bool", Bool);
+		variables.set("Dynamic", Dynamic);
+		variables.set("Float", Float);
+		variables.set("Int", Int);
+		variables.set("String", String);
 	}
 
 	public function clearScriptClassDescriptors():Void {
@@ -559,7 +578,6 @@ class PolymodInterpEx extends Interp
 		{
 		#end
 			// These overrides are used to handle specific cases where problems occur.
-
 			case EVar(name, type, expression):
 				// Fix to ensure local variables are committed properly.
 				declared.push({n: name, old: locals.get(name)});
@@ -612,8 +630,8 @@ class PolymodInterpEx extends Interp
 				}
 			case EFunction(params, fexpr, name, _):
 				// Fix to ensure callback functions catch thrown errors.
-				var capturedLocals = duplicate(locals);
-				var me = this;
+				// Using a clone to prevent locals getting wiped out.
+				var clone = this.clone();
 				var hasOpt = false, minParams = 0;
 				for (p in params)
 				{
@@ -664,27 +682,24 @@ class PolymodInterpEx extends Interp
 						}
 						args = args2;
 					}
-					var old = me.locals;
-					var depth = me.depth;
-					me.depth++;
-					me.locals = me.duplicate(capturedLocals);
+
+					clone.depth++;
+
 					for (i in 0...params.length)
 					{
-						me.locals.set(params[i].name, {r: args[i]});
+						clone.locals.set(params[i].name, {r: args[i]});
 					}
 					var r = null;
-					var oldDecl = declared.length;
+
 					if (inTry)
 					{
 						// True if the SCRIPT wraps the function in a try/catch block.
 						try
 						{
-							r = me.exprReturn(fexpr);
+							r = clone.exprReturn(fexpr);
 						}
 						catch (e:Dynamic)
 						{
-							me.locals = old;
-							me.depth = depth;
 							#if neko
 							neko.Lib.rethrow(e);
 							#else
@@ -697,7 +712,7 @@ class PolymodInterpEx extends Interp
 						// There is no try/catch block. We can add some custom error handling.
 						try
 						{
-							r = me.exprReturn(fexpr);
+							r = clone.exprReturn(fexpr);
 						}
 						catch (err:PolymodExprEx.ErrorEx)
 						{
@@ -714,9 +729,6 @@ class PolymodInterpEx extends Interp
 							throw err;
 						}
 					}
-					restore(oldDecl);
-					me.locals = old;
-					me.depth = depth;
 					return r;
 				};
 
@@ -734,7 +746,7 @@ class PolymodInterpEx extends Interp
 						declared.push({n: name, old: locals.get(name)});
 						var ref = {r: newFun};
 						locals.set(name, ref);
-						capturedLocals.set(name, ref); // allow self-recursion
+						clone.locals.set(name, ref); // allow self-recursion
 					}
 				}
 				return newFun;
@@ -1966,6 +1978,34 @@ class PolymodInterpEx extends Interp
 				case DTypedef(_):
 			}
 		}
+	}
+
+	public function clone():PolymodInterpEx
+	{
+		var _clone = new PolymodInterpEx(this.targetCls, this._proxy);
+
+		// Copy over the values, but exclude the trace function.
+		for (k => v in this.variables)
+		{
+			if (k != "trace") _clone.variables.set(k, v);
+		}
+
+		for (k => v in this.locals)
+		{
+			_clone.locals.set(k, v);
+		}
+
+		for (v in this.declared)
+		{
+			if (!_clone.declared.contains(v)) _clone.declared.push(v);
+		}
+
+		_clone._nextCallObject = this._nextCallObject;
+		_clone._classDeclOverride = this._classDeclOverride;
+		_clone.depth = this.depth;
+		_clone.curExpr = this.curExpr;
+		_clone.inTry = this.inTry;
+		return _clone;
 	}
 }
 

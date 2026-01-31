@@ -73,8 +73,8 @@ class PolymodScriptClassMacro {
 		  	switch (type) {
 			  // Class instances
 			  case TInst(t, _params):
-				var classType:ClassType = t.get();
-				var classPath:String = '${classType.pack.join(".")}.${classType.name}';
+			  var classType:ClassType = t.get();
+				var classPath:String = '${classType.pack.concat([classType.name]).join(".")}';
 
 				if (classType.isInterface) {
 					// Ignore interfaces.
@@ -85,7 +85,7 @@ class PolymodScriptClassMacro {
 
 					if (superClass == null) throw 'No superclass for ' + classPath;
 
-					var superClassPath:String = '${superClass.pack.join(".")}.${superClass.name}';
+					var superClassPath:String = '${superClass.pack.concat([superClass.name]).join(".")}';
 					var entryData = [
 						macro $v{superClassPath},
 						// TODO: How do we do reification to get a class?
