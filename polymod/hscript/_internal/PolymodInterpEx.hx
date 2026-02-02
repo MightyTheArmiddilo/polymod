@@ -1854,11 +1854,10 @@ class PolymodInterpEx extends Interp
 						importedClass.cls = PolymodScriptClass.abstractClassImpls.get(importedClass.fullPath);
 
 						if (importedClass.cls == null) {
-							trace('UNRESOLVED ABSTRACT CLASS ${importedClass.fullPath}');
 							Polymod.warning(SCRIPT_CLASS_MODULE_NOT_FOUND, 'Abstract type ${importedClass.fullPath} could not be resolved. Try using the underlying type instead.', origin);
 						} else {
-							trace('RESOLVED ABSTRACT CLASS ${importedClass.fullPath} -> ${Type.getClassName(importedClass.cls)}');
-							trace(Type.getClassFields(importedClass.cls));
+							// trace('RESOLVED ABSTRACT CLASS ${importedClass.fullPath} -> ${Type.getClassName(importedClass.cls)}');
+							// trace(Type.getClassFields(importedClass.cls));
 						}
 
 					} else if (_scriptEnumDescriptors.exists(importedClass.fullPath)) {
@@ -1914,8 +1913,6 @@ class PolymodInterpEx extends Interp
 					} else if (PolymodScriptClass.abstractClassImpls.exists(importedClass.fullPath)) {
 						// We used a macro to map each abstract to its implementation.
 						importedClass.cls = PolymodScriptClass.abstractClassImpls.get(importedClass.fullPath);
-						trace('RESOLVED ABSTRACT CLASS ${importedClass.fullPath} -> ${Type.getClassName(importedClass.cls)}');
-						trace(Type.getClassFields(importedClass.cls));
 					} else if (_scriptEnumDescriptors.exists(importedClass.fullPath)) {
 						// do nothing
 					} else {
