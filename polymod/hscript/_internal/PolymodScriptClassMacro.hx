@@ -170,124 +170,127 @@ class PolymodScriptClassMacro {
 					// Check if, for other reasons, the implementation is missing.
 					var abstractHasNoImpl = abstractType.impl == null;
 					if (abstractHasNoImpl) {
+						// Only a few classes end up here, generally ones that are implemented directly in code.
+						// Includes like StdTypes.Float, StdTypes.Dynamic, StdTypes.Void, cpp.Int16, cpp.SizeT, Class, Enum
 						continue;
-					}
+					} else {
+						var abstractImplPath = abstractType.impl.toString();
+						var abstractImplType = abstractType.impl.get();
+						var abstractImplStatics = abstractImplType.statics.get();
+						var underlyingType = abstractType.type;
 
-					var abstractImplPath = abstractType.impl.toString();
-					var abstractImplType = abstractType.impl.get();
-
-					for (field in abstractImplType.statics.get()) {
-						switch (field.kind) {
-							case FVar(read, write):
-								var canGet:Bool = read == AccInline || read == AccNormal;
-								if (read == AccCall) {
-									var getter:Null<ClassField> = null;
-									 for (f in abstractImplType.statics.get()) {
-										if (f.name == 'get_${field.name}'){
-											getter = f;
-											break;
+						for (field in abstractImplStatics) {
+							switch (field.kind) {
+								case FVar(read, write):
+									var canGet:Bool = read == AccInline || read == AccNormal;
+									if (read == AccCall) {
+										var getter:Null<ClassField> = null;
+										 for (f in abstractImplStatics) {
+											if (f.name == 'get_${field.name}'){
+												getter = f;
+												break;
+											}
 										}
-									}
 
-									if (getter == null) {
-										throw 'Getter is null?';
-									}
-
-									switch (getter.type) {
-										case TFun(args, _):
-											if (args.length != 0)
-												continue;
-										default:
-											throw 'Getter has an unknown type?';
-									}
-
-									canGet = true;
-								}
-
-								var canSet:Bool = write == AccNormal;
-								if (write == AccCall) {
-									var setter:Null<ClassField> = null;
-									 for (f in abstractImplType.statics.get()){
-										if (f.name == 'set_${field.name}'){
-											setter = f;
-											break;
+										if (getter == null) {
+											throw 'Getter is null?';
 										}
+
+										switch (getter.type) {
+											case TFun(args, _):
+												if (args.length != 0)
+													continue;
+											default:
+												throw 'Getter has an unknown type?';
+										}
+
+										canGet = true;
 									}
 
-									if (setter == null) {
-										throw 'Setter is null?';
+									var canSet:Bool = write == AccNormal;
+									if (write == AccCall) {
+										var setter:Null<ClassField> = null;
+										 for (f in abstractImplType.statics.get()){
+											if (f.name == 'set_${field.name}'){
+												setter = f;
+												break;
+											}
+										}
+
+										if (setter == null) {
+											throw 'Setter is null?';
+										}
+
+										switch (setter.type) {
+											case TFun(args, _):
+												if (args.length != 1)
+													continue;
+											default:
+												throw 'Setter has an unknown type?';
+										}
+
+										canSet = true;
 									}
 
-									switch (setter.type) {
-										case TFun(args, _):
-											if (args.length != 1)
-												continue;
-										default:
-											throw 'Setter has an unknown type?';
+									if (canGet) {
+										var fieldName:String = '${abstractImplPath.replace('.', '_')}_${field.name}';
+
+										fields.push({
+											pos: Context.currentPos(),
+											name: fieldName,
+											access: [Access.APublic, Access.AStatic],
+											kind: FProp(canGet ? 'get' : 'never', canSet ? 'set' : 'never', (macro: Dynamic), null)
+										});
+
+										var fieldExpr:Expr = null;
+										try {
+											// when this fails, this should mean that we are dealing with an enum abstract
+											// so we need to handle it differently
+											var fullPath:String = '${abstractType.module}.${abstractType.name}';
+											Context.getType(fullPath);
+											fieldExpr = Context.parse('${fullPath}.${field.name}', Context.currentPos());
+										} catch (_) {
+											fieldExpr = Context.getTypedExpr(field.expr());
+										}
+
+										if (canGet) {
+											fields.push({
+												pos: Context.currentPos(),
+												name: 'get_${fieldName}',
+												access: [Access.APublic, Access.AStatic],
+												kind: FFun({
+													args: [],
+													ret: null,
+													expr: macro {
+														@:privateAccess
+														return ${fieldExpr};
+													}
+												})
+											});
+										}
+
+										if (canSet) {
+											fields.push({
+												pos: Context.currentPos(),
+												name: 'set_${fieldName}',
+												access: [Access.APublic, Access.AStatic],
+												kind: FFun({
+													args: [{name: 'value'}],
+													ret: null,
+													expr: macro {
+														@:privateAccess
+														return ${fieldExpr} = value;
+													}
+												})
+											});
+										}
+
+										staticFieldToClass.set('${abstractImplPath}.${field.name}', 'polymod.hscript._internal.AbstractStaticMembers_${iteration}');
 									}
 
-									canSet = true;
-								}
-
-								if (!canGet && !canSet) {
+								default:
 									continue;
-								}
-
-								var fieldName:String = '${abstractImplPath.replace('.', '_')}_${field.name}';
-
-								fields.push({
-									pos: Context.currentPos(),
-									name: fieldName,
-									access: [Access.APublic, Access.AStatic],
-									kind: FProp(canGet ? 'get' : 'never', canSet ? 'set' : 'never', (macro: Dynamic), null)
-								});
-
-								var fieldExpr:Expr = null;
-								try {
-									// when this fails, this should mean that we are dealing with an enum abstract
-									// so we need to handle it differently
-									var fullPath:String = '${abstractType.module}.${abstractType.name}';
-									Context.getType(fullPath);
-									fieldExpr = Context.parse('${fullPath}.${field.name}', Context.currentPos());
-								} catch (_) {
-									fieldExpr = Context.getTypedExpr(field.expr());
-								}
-
-								if (canGet) {
-									fields.push({
-										pos: Context.currentPos(),
-										name: 'get_${fieldName}',
-										access: [Access.APublic, Access.AStatic],
-										kind: FFun({
-											args: [],
-											ret: null,
-											expr: macro {
-												@:privateAccess
-												return ${fieldExpr};
-											}
-										})
-									});
-								}
-
-								if (canSet) {
-									fields.push({
-										pos: Context.currentPos(),
-										name: 'set_${fieldName}',
-										access: [Access.APublic, Access.AStatic],
-										kind: FFun({
-											args: [{name: 'value'}],
-											ret: null,
-											expr: macro {
-												@:privateAccess
-												return ${fieldExpr} = value;
-											}
-										})
-									});
-								}
-
-								staticFieldToClass.set('${abstractImplPath}.${field.name}', 'polymod.hscript._internal.AbstractStaticMembers_${iteration}');
-							default:
-								continue;
+							}
 						}
 					}
 				default:
